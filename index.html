@@ -165,7 +165,6 @@
 
         // --- GLOBAL VARIABLES ---
         let pdfText = "";
-        let storedApiKey = ""; // Store API key in memory instead of localStorage
 
         // --- DOM ELEMENT REFERENCES ---
         const apiKeyInput = document.getElementById('api-key-input');
@@ -190,17 +189,15 @@
 
         // --- INITIALIZATION ---
         document.addEventListener('DOMContentLoaded', () => {
-            // Use memory storage instead of localStorage
-            if (storedApiKey) {
-                apiKeyInput.value = storedApiKey;
+            const savedApiKey = localStorage.getItem('googleApiKey');
+            if (savedApiKey) {
+                apiKeyInput.value = savedApiKey;
             }
         });
 
         apiKeyInput.addEventListener('input', () => {
-            // Store in memory instead of localStorage
-            storedApiKey = apiKeyInput.value;
+            localStorage.setItem('googleApiKey', apiKeyInput.value);
         });
-
         // Add Enter key support for Q&A
         qaInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
