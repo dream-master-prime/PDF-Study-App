@@ -73,6 +73,16 @@
         </header>
 
         <main>
+            <!-- API Key Input Section -->
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-8">
+                <h2 class="text-2xl font-semibold mb-2 text-gray-900 dark:text-white">Your Google AI API Key</h2>
+                 <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    To use the AI features, you need a free API key from Google AI Studio.
+                    <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-blue-500 hover:underline">Get your key here</a>, then paste it below.
+                </p>
+                <input type="password" id="api-key-input" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" placeholder="Paste your Google AI API Key here">
+            </div>
+
             <!-- PDF Upload Section -->
             <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-8">
                 <h2 class="text-2xl font-semibold mb-4 text-gray-900 dark:text-white">1. Upload Your PDF</h2>
@@ -154,15 +164,12 @@
         // --- JAVASCRIPT LOGIC ---
 
         // --- GLOBAL VARIABLES ---
-        // This will hold the extracted text from the PDF. We store it globally
-        // so we don't have to re-read the PDF for each AI operation.
         let pdfText = "";
 
         // --- DOM ELEMENT REFERENCES ---
-        // Getting references to all the HTML elements we'll need to interact with.
+        const apiKeyInput = document.getElementById('api-key-input');
         const pdfUpload = document.getElementById('pdf-upload');
         const fileNameDisplay = document.getElementById('file-name');
-        const uploadLabel = document.getElementById('upload-label');
         const pdfProgress = document.getElementById('pdf-progress');
         const progressBar = document.getElementById('progress-bar');
         const aiToolsSection = document.getElementById('ai-tools');
@@ -180,12 +187,23 @@
         const qaOutput = document.getElementById('qa-output');
         const qaLoader = document.getElementById('qa-loader');
 
+        // --- INITIALIZATION ---
+        // This function runs when the page loads.
+        document.addEventListener('DOMContentLoaded', () => {
+            // Load the saved API key from browser's local storage, if it exists.
+            const savedApiKey = localStorage.getItem('googleApiKey');
+            if (savedApiKey) {
+                apiKeyInput.value = savedApiKey;
+            }
+        });
+
+        // Save the API key to local storage whenever it's changed.
+        apiKeyInput.addEventListener('input', () => {
+            localStorage.setItem('googleApiKey', apiKeyInput.value);
+        });
+
+
         // --- PDF HANDLING ---
-        
-        /**
-         * This is the main event listener for the file input.
-         * It triggers when the user selects a file.
-         */
         pdfUpload.addEventListener('change', async (event) => {
             const file = event.target.files[0];
             if (!file || file.type !== 'application/pdf') {
@@ -193,82 +211,64 @@
                 return;
             }
 
-            // Display the file name and show the progress bar.
             fileNameDisplay.textContent = `Selected file: ${file.name}`;
             pdfProgress.classList.remove('hidden');
             progressBar.style.width = '0%';
             progressBar.textContent = '0%';
-            aiToolsSection.classList.add('hidden'); // Hide tools until text is extracted
+            aiToolsSection.classList.add('hidden');
 
             try {
-                // Call the function to extract text from the PDF.
                 pdfText = await extractTextFromPdf(file);
-                // Once text is extracted, show the AI tools section.
                 aiToolsSection.classList.remove('hidden');
-                // You could optionally display the raw text for debugging:
-                // console.log("Extracted Text:", pdfText);
             } catch (error) {
                 console.error('Error processing PDF:', error);
                 alert('Could not read the PDF file. It might be corrupted or protected.');
-                // Reset the UI on error.
                 fileNameDisplay.textContent = '';
                 pdfProgress.classList.add('hidden');
             }
         });
-
-        /**
-         * Extracts text from a PDF file using the PDF.js library.
-         * @param {File} file - The PDF file object from the input.
-         * @returns {Promise<string>} A promise that resolves with the full text of the PDF.
-         */
+        
         async function extractTextFromPdf(file) {
             const fileReader = new FileReader();
-            
-            // We use a Promise here to handle the asynchronous nature of file reading.
             return new Promise((resolve, reject) => {
                 fileReader.onload = async () => {
                     const typedarray = new Uint8Array(fileReader.result);
-                    // Load the PDF document with PDF.js
                     const pdf = await pdfjsLib.getDocument({data: typedarray}).promise;
                     let fullText = '';
                     
-                    // Iterate through each page of the PDF.
                     for (let i = 1; i <= pdf.numPages; i++) {
                         const page = await pdf.getPage(i);
                         const textContent = await page.getTextContent();
-                        // Join the text items of the page into a single string.
                         const pageText = textContent.items.map(item => item.str).join(' ');
                         fullText += pageText + '\n\n';
 
-                        // Update the progress bar after each page is processed.
                         const progress = Math.round((i / pdf.numPages) * 100);
                         progressBar.style.width = `${progress}%`;
                         progressBar.textContent = `${progress}%`;
                     }
-                    // Resolve the promise with the complete text.
                     resolve(fullText);
                 };
-
                 fileReader.onerror = reject;
-                // Start reading the file.
                 fileReader.readAsArrayBuffer(file);
             });
         }
 
 
         // --- GEMINI API INTERACTION ---
-
         /**
          * A generic function to call the Gemini API.
-         * This function handles the network request and basic error handling.
+         * This function now requires the user's API key.
          * @param {string} prompt - The prompt to send to the AI model.
-         * @returns {Promise<string>} A promise that resolves with the text generated by the model.
+         * @returns {Promise<string|null>} A promise that resolves with the text generated by the model, or null on failure.
          */
         async function callGemini(prompt) {
-            // IMPORTANT: An API key is not required for gemini-2.0-flash
-            // Canvas will automatically handle the authentication.
-            const apiKey = ""; 
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+            const apiKey = apiKeyInput.value.trim();
+            if (!apiKey) {
+                alert("Please enter your Google AI API Key to use this feature.");
+                return null; // Stop if there's no API key
+            }
+
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
 
             const payload = {
                 contents: [{
@@ -285,67 +285,63 @@
 
                 if (!response.ok) {
                     const errorData = await response.json();
+                    // Provide a more specific error message based on the status code.
+                    if(response.status === 403) {
+                         alert(`API Error: ${response.status} - Your API Key might be invalid or has restrictions. Please check your key in Google AI Studio.`);
+                    } else {
+                         alert(`API Error: ${response.status} - ${errorData.error.message}`);
+                    }
                     throw new Error(`API Error: ${response.status} - ${errorData.error.message}`);
                 }
 
                 const result = await response.json();
-
-                // Navigate through the response structure to get the generated text.
+                
                 if (result.candidates && result.candidates.length > 0 &&
                     result.candidates[0].content && result.candidates[0].content.parts &&
                     result.candidates[0].content.parts.length > 0) {
                     return result.candidates[0].content.parts[0].text;
                 } else {
+                     // This can happen if the AI refuses to answer due to safety settings.
+                    if (result.promptFeedback && result.promptFeedback.blockReason) {
+                        alert(`Request was blocked by the API. Reason: ${result.promptFeedback.blockReason}`);
+                    }
                     throw new Error("No content found in API response.");
                 }
             } catch (error) {
                 console.error("Error calling Gemini API:", error);
-                alert("An error occurred while communicating with the AI. Please check the console for details.");
-                return null; // Return null to indicate failure.
+                // The specific alert is now handled above, so we can just return null.
+                return null; 
             }
         }
 
 
         // --- FEATURE IMPLEMENTATIONS ---
 
-        /**
-         * Handles the "Generate Summary" button click.
-         */
         generateSummaryBtn.addEventListener('click', async () => {
             if (!pdfText) {
                 alert("Please upload a PDF first.");
                 return;
             }
-
-            // Show loader and hide previous output
             summaryLoader.classList.remove('hidden');
             summaryOutput.innerHTML = '';
             
             const prompt = `Please provide a concise summary of the following document. Focus on the key points, main arguments, and conclusions. The summary should be easy to understand for someone who has not read the original document.\n\nDOCUMENT:\n${pdfText}`;
             
             const summary = await callGemini(prompt);
-            
-            // Hide loader
             summaryLoader.classList.add('hidden');
             
             if (summary) {
-                // Simple markdown-to-HTML conversion for display
                 summaryOutput.innerHTML = summary.replace(/\n/g, '<br>');
             } else {
-                summaryOutput.textContent = "Failed to generate summary.";
+                summaryOutput.textContent = "Failed to generate summary. Check the console for details.";
             }
         });
 
-        /**
-         * Handles the "Generate Flashcards" button click.
-         */
         generateFlashcardsBtn.addEventListener('click', async () => {
             if (!pdfText) {
                 alert("Please upload a PDF first.");
                 return;
             }
-
-            // Show loader and clear previous output
             flashcardsLoader.classList.remove('hidden');
             flashcardsOutput.innerHTML = '';
 
@@ -356,7 +352,6 @@
 
             if (responseText) {
                 try {
-                    // The Gemini response might be wrapped in ```json ... ```, so we need to clean it.
                     const cleanedJson = responseText.replace(/```json\n?/, '').replace(/```$/, '');
                     const flashcards = JSON.parse(cleanedJson);
                     displayFlashcards(flashcards);
@@ -365,13 +360,10 @@
                     flashcardsOutput.innerHTML = `<p class="text-red-500">Could not parse the flashcards from the AI's response. Please try again.</p>`;
                 }
             } else {
-                flashcardsOutput.innerHTML = `<p class="text-red-500">Failed to generate flashcards.</p>`;
+                flashcardsOutput.innerHTML = `<p class="text-red-500">Failed to generate flashcards. Check the console for details.</p>`;
             }
         });
         
-        /**
-         * Handles the "Ask" button click for the Q&A feature.
-         */
         qaBtn.addEventListener('click', async () => {
             const question = qaInput.value.trim();
             if (!question) {
@@ -382,8 +374,6 @@
                 alert("Please upload a PDF first.");
                 return;
             }
-
-            // Show loader and clear previous output
             qaLoader.classList.remove('hidden');
             qaOutput.innerHTML = '';
 
@@ -395,42 +385,27 @@
             if (answer) {
                  qaOutput.innerHTML = answer.replace(/\n/g, '<br>');
             } else {
-                qaOutput.textContent = "Failed to get an answer.";
+                qaOutput.textContent = "Failed to get an answer. Check the console for details.";
             }
         });
 
 
         // --- UI HELPER FUNCTIONS ---
 
-        /**
-         * Switches between the 'Summary', 'Flashcards', and 'Q&A' tabs.
-         * @param {string} tabName - The name of the tab to switch to.
-         */
         function changeTab(tabName) {
-            // Hide all tab panes
             document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.add('hidden'));
-            
-            // De-select all tab buttons
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 btn.classList.remove('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
                 btn.classList.add('border-transparent', 'text-gray-500', 'dark:text-gray-400');
             });
-            
-            // Show the selected tab pane
             document.getElementById(`${tabName}-content`).classList.remove('hidden');
-            
-            // Highlight the selected tab button
             const activeBtn = document.getElementById(`tab-${tabName}`);
             activeBtn.classList.add('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
             activeBtn.classList.remove('border-transparent', 'text-gray-500', 'dark:text-gray-400');
         }
 
-        /**
-         * Renders the generated flashcards into the UI.
-         * @param {Array<Object>} flashcards - An array of flashcard objects, each with a 'front' and 'back' property.
-         */
         function displayFlashcards(flashcards) {
-            flashcardsOutput.innerHTML = ''; // Clear previous cards
+            flashcardsOutput.innerHTML = '';
             flashcards.forEach(cardData => {
                 const cardElement = document.createElement('div');
                 cardElement.className = 'flashcard h-64 rounded-lg cursor-pointer';
@@ -444,7 +419,6 @@
                         </div>
                     </div>
                 `;
-                // Add a click event listener to flip the card.
                 cardElement.addEventListener('click', () => {
                     cardElement.classList.toggle('flipped');
                 });
