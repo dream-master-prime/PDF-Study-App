@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Study Assistant</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PDF.js for reading PDF files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <script>
+        // Required for PDF.js to work
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js`;
+    </script>
+    
+    <style>
+        /* Custom styles for a polished look */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .loader {
+            border-top-color: #3498db;
+            -webkit-animation: spin 1s linear infinite;
+            animation: spin 1s linear infinite;
+        }
+        @-webkit-keyframes spin {
+            0% { -webkit-transform: rotate(0deg); }
+            100% { -webkit-transform: rotate(360deg); }
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .flashcard {
+            perspective: 1000px;
+        }
+        .flashcard-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            text-align: center;
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+        }
+        .flashcard.flipped .flashcard-inner {
+            transform: rotateY(180deg);
+        }
+        .flashcard-front, .flashcard-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .flashcard-back {
+            transform: rotateY(180deg);
+        }
+    </style>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white">PDF Study Assistant</h1>
+            <p class="text-lg text-gray-600 dark:text-gray-400 mt-2">Upload a PDF to summarize, generate flashcards, and ask questions.</p>
+        </header>
+
+        <main>
+            <!-- PDF Upload Section -->
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 mb-8">
+                <h2 class="text-2xl font-semibold mb-4 text-gray-900 dark:text-white">1. Upload Your PDF</h2>
+                <div class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center">
+                    <input type="file" id="pdf-upload" class="hidden" accept="application/pdf">
+                    <label for="pdf-upload" id="upload-label" class="cursor-pointer">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <span class="mt-2 block text-sm font-medium text-gray-900 dark:text-gray-300">
+                            Click to upload a PDF
+                        </span>
+                    </label>
+                    <p id="file-name" class="mt-2 text-sm text-gray-500 dark:text-gray-400"></p>
+                </div>
+                <div id="pdf-progress" class="hidden mt-4">
+                    <p class="text-center text-blue-500">Extracting text from PDF...</p>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full mt-2">
+                        <div id="progress-bar" class="bg-blue-600 text-xs font-medium text-blue-100 text-center p-0.5 leading-none rounded-full" style="width: 0%">0%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Tools Section -->
+            <div id="ai-tools" class="hidden">
+                <!-- Tab Navigation -->
+                <div class="mb-4 border-b border-gray-200 dark:border-gray-700">
+                    <nav class="flex space-x-4" aria-label="Tabs">
+                        <button onclick="changeTab('summary')" id="tab-summary" class="tab-btn px-3 py-2 font-medium text-sm rounded-t-lg border-b-2 border-blue-500 text-blue-600 dark:text-blue-400">Summary</button>
+                        <button onclick="changeTab('flashcards')" id="tab-flashcards" class="tab-btn px-3 py-2 font-medium text-sm rounded-t-lg border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300">Flashcards</button>
+                        <button onclick="changeTab('qa')" id="tab-qa" class="tab-btn px-3 py-2 font-medium text-sm rounded-t-lg border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300">Q&A</button>
+                    </nav>
+                </div>
+
+                <!-- Tab Content -->
+                <div id="tab-content" class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6">
+                    <!-- Summary Content -->
+                    <div id="summary-content" class="tab-pane">
+                        <h2 class="text-2xl font-semibold mb-4 text-gray-900 dark:text-white">2. Summary</h2>
+                        <button id="generate-summary-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">Generate Summary</button>
+                        <div id="summary-output" class="mt-4 text-gray-700 dark:text-gray-300 prose dark:prose-invert max-w-none"></div>
+                        <div id="summary-loader" class="hidden mt-4 flex items-center justify-center">
+                            <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div>
+                            <p class="ml-4">Generating summary...</p>
+                        </div>
+                    </div>
+
+                    <!-- Flashcards Content -->
+                    <div id="flashcards-content" class="tab-pane hidden">
+                        <h2 class="text-2xl font-semibold mb-4 text-gray-900 dark:text-white">2. Flashcards</h2>
+                        <button id="generate-flashcards-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">Generate Flashcards</button>
+                        <div id="flashcards-output" class="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+                        <div id="flashcards-loader" class="hidden mt-4 flex items-center justify-center">
+                            <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div>
+                            <p class="ml-4">Generating flashcards...</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Q&A Content -->
+                    <div id="qa-content" class="tab-pane hidden">
+                        <h2 class="text-2xl font-semibold mb-4 text-gray-900 dark:text-white">2. Ask a Question</h2>
+                        <div class="flex flex-col sm:flex-row gap-2">
+                            <input type="text" id="qa-input" class="flex-grow bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400 dark:text-white" placeholder="Ask anything about the document...">
+                            <button id="qa-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-300">Ask</button>
+                        </div>
+                        <div id="qa-output" class="mt-4 text-gray-700 dark:text-gray-300 prose dark:prose-invert max-w-none"></div>
+                        <div id="qa-loader" class="hidden mt-4 flex items-center justify-center">
+                            <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div>
+                            <p class="ml-4">Finding an answer...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+    </div>
+
+    <script>
+        // --- JAVASCRIPT LOGIC ---
+
+        // --- GLOBAL VARIABLES ---
+        // This will hold the extracted text from the PDF. We store it globally
+        // so we don't have to re-read the PDF for each AI operation.
+        let pdfText = "";
+
+        // --- DOM ELEMENT REFERENCES ---
+        // Getting references to all the HTML elements we'll need to interact with.
+        const pdfUpload = document.getElementById('pdf-upload');
+        const fileNameDisplay = document.getElementById('file-name');
+        const uploadLabel = document.getElementById('upload-label');
+        const pdfProgress = document.getElementById('pdf-progress');
+        const progressBar = document.getElementById('progress-bar');
+        const aiToolsSection = document.getElementById('ai-tools');
+        
+        const generateSummaryBtn = document.getElementById('generate-summary-btn');
+        const summaryOutput = document.getElementById('summary-output');
+        const summaryLoader = document.getElementById('summary-loader');
+        
+        const generateFlashcardsBtn = document.getElementById('generate-flashcards-btn');
+        const flashcardsOutput = document.getElementById('flashcards-output');
+        const flashcardsLoader = document.getElementById('flashcards-loader');
+
+        const qaInput = document.getElementById('qa-input');
+        const qaBtn = document.getElementById('qa-btn');
+        const qaOutput = document.getElementById('qa-output');
+        const qaLoader = document.getElementById('qa-loader');
+
+        // --- PDF HANDLING ---
+        
+        /**
+         * This is the main event listener for the file input.
+         * It triggers when the user selects a file.
+         */
+        pdfUpload.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file || file.type !== 'application/pdf') {
+                alert('Please select a valid PDF file.');
+                return;
+            }
+
+            // Display the file name and show the progress bar.
+            fileNameDisplay.textContent = `Selected file: ${file.name}`;
+            pdfProgress.classList.remove('hidden');
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            aiToolsSection.classList.add('hidden'); // Hide tools until text is extracted
+
+            try {
+                // Call the function to extract text from the PDF.
+                pdfText = await extractTextFromPdf(file);
+                // Once text is extracted, show the AI tools section.
+                aiToolsSection.classList.remove('hidden');
+                // You could optionally display the raw text for debugging:
+                // console.log("Extracted Text:", pdfText);
+            } catch (error) {
+                console.error('Error processing PDF:', error);
+                alert('Could not read the PDF file. It might be corrupted or protected.');
+                // Reset the UI on error.
+                fileNameDisplay.textContent = '';
+                pdfProgress.classList.add('hidden');
+            }
+        });
+
+        /**
+         * Extracts text from a PDF file using the PDF.js library.
+         * @param {File} file - The PDF file object from the input.
+         * @returns {Promise<string>} A promise that resolves with the full text of the PDF.
+         */
+        async function extractTextFromPdf(file) {
+            const fileReader = new FileReader();
+            
+            // We use a Promise here to handle the asynchronous nature of file reading.
+            return new Promise((resolve, reject) => {
+                fileReader.onload = async () => {
+                    const typedarray = new Uint8Array(fileReader.result);
+                    // Load the PDF document with PDF.js
+                    const pdf = await pdfjsLib.getDocument({data: typedarray}).promise;
+                    let fullText = '';
+                    
+                    // Iterate through each page of the PDF.
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const textContent = await page.getTextContent();
+                        // Join the text items of the page into a single string.
+                        const pageText = textContent.items.map(item => item.str).join(' ');
+                        fullText += pageText + '\n\n';
+
+                        // Update the progress bar after each page is processed.
+                        const progress = Math.round((i / pdf.numPages) * 100);
+                        progressBar.style.width = `${progress}%`;
+                        progressBar.textContent = `${progress}%`;
+                    }
+                    // Resolve the promise with the complete text.
+                    resolve(fullText);
+                };
+
+                fileReader.onerror = reject;
+                // Start reading the file.
+                fileReader.readAsArrayBuffer(file);
+            });
+        }
+
+
+        // --- GEMINI API INTERACTION ---
+
+        /**
+         * A generic function to call the Gemini API.
+         * This function handles the network request and basic error handling.
+         * @param {string} prompt - The prompt to send to the AI model.
+         * @returns {Promise<string>} A promise that resolves with the text generated by the model.
+         */
+        async function callGemini(prompt) {
+            // IMPORTANT: An API key is not required for gemini-2.0-flash
+            // Canvas will automatically handle the authentication.
+            const apiKey = ""; 
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            const payload = {
+                contents: [{
+                    parts: [{ text: prompt }]
+                }]
+            };
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`API Error: ${response.status} - ${errorData.error.message}`);
+                }
+
+                const result = await response.json();
+
+                // Navigate through the response structure to get the generated text.
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    return result.candidates[0].content.parts[0].text;
+                } else {
+                    throw new Error("No content found in API response.");
+                }
+            } catch (error) {
+                console.error("Error calling Gemini API:", error);
+                alert("An error occurred while communicating with the AI. Please check the console for details.");
+                return null; // Return null to indicate failure.
+            }
+        }
+
+
+        // --- FEATURE IMPLEMENTATIONS ---
+
+        /**
+         * Handles the "Generate Summary" button click.
+         */
+        generateSummaryBtn.addEventListener('click', async () => {
+            if (!pdfText) {
+                alert("Please upload a PDF first.");
+                return;
+            }
+
+            // Show loader and hide previous output
+            summaryLoader.classList.remove('hidden');
+            summaryOutput.innerHTML = '';
+            
+            const prompt = `Please provide a concise summary of the following document. Focus on the key points, main arguments, and conclusions. The summary should be easy to understand for someone who has not read the original document.\n\nDOCUMENT:\n${pdfText}`;
+            
+            const summary = await callGemini(prompt);
+            
+            // Hide loader
+            summaryLoader.classList.add('hidden');
+            
+            if (summary) {
+                // Simple markdown-to-HTML conversion for display
+                summaryOutput.innerHTML = summary.replace(/\n/g, '<br>');
+            } else {
+                summaryOutput.textContent = "Failed to generate summary.";
+            }
+        });
+
+        /**
+         * Handles the "Generate Flashcards" button click.
+         */
+        generateFlashcardsBtn.addEventListener('click', async () => {
+            if (!pdfText) {
+                alert("Please upload a PDF first.");
+                return;
+            }
+
+            // Show loader and clear previous output
+            flashcardsLoader.classList.remove('hidden');
+            flashcardsOutput.innerHTML = '';
+
+            const prompt = `Based on the following document, generate a set of flashcards. Each flashcard should have a "front" with a key term or question, and a "back" with the corresponding definition or answer. Provide the output as a valid JSON array of objects, where each object has a "front" and a "back" property. For example: [{"front": "What is the capital of France?", "back": "Paris"}]. \n\nDOCUMENT:\n${pdfText}`;
+
+            const responseText = await callGemini(prompt);
+            flashcardsLoader.classList.add('hidden');
+
+            if (responseText) {
+                try {
+                    // The Gemini response might be wrapped in ```json ... ```, so we need to clean it.
+                    const cleanedJson = responseText.replace(/```json\n?/, '').replace(/```$/, '');
+                    const flashcards = JSON.parse(cleanedJson);
+                    displayFlashcards(flashcards);
+                } catch (error) {
+                    console.error("Error parsing flashcards JSON:", error);
+                    flashcardsOutput.innerHTML = `<p class="text-red-500">Could not parse the flashcards from the AI's response. Please try again.</p>`;
+                }
+            } else {
+                flashcardsOutput.innerHTML = `<p class="text-red-500">Failed to generate flashcards.</p>`;
+            }
+        });
+        
+        /**
+         * Handles the "Ask" button click for the Q&A feature.
+         */
+        qaBtn.addEventListener('click', async () => {
+            const question = qaInput.value.trim();
+            if (!question) {
+                alert("Please enter a question.");
+                return;
+            }
+            if (!pdfText) {
+                alert("Please upload a PDF first.");
+                return;
+            }
+
+            // Show loader and clear previous output
+            qaLoader.classList.remove('hidden');
+            qaOutput.innerHTML = '';
+
+            const prompt = `Based on the content of the following document, please answer the user's question. If the answer is not in the document, say that you cannot find the answer in the provided text.\n\nDOCUMENT:\n${pdfText}\n\nQUESTION:\n${question}`;
+            
+            const answer = await callGemini(prompt);
+            qaLoader.classList.add('hidden');
+
+            if (answer) {
+                 qaOutput.innerHTML = answer.replace(/\n/g, '<br>');
+            } else {
+                qaOutput.textContent = "Failed to get an answer.";
+            }
+        });
+
+
+        // --- UI HELPER FUNCTIONS ---
+
+        /**
+         * Switches between the 'Summary', 'Flashcards', and 'Q&A' tabs.
+         * @param {string} tabName - The name of the tab to switch to.
+         */
+        function changeTab(tabName) {
+            // Hide all tab panes
+            document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.add('hidden'));
+            
+            // De-select all tab buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
+                btn.classList.add('border-transparent', 'text-gray-500', 'dark:text-gray-400');
+            });
+            
+            // Show the selected tab pane
+            document.getElementById(`${tabName}-content`).classList.remove('hidden');
+            
+            // Highlight the selected tab button
+            const activeBtn = document.getElementById(`tab-${tabName}`);
+            activeBtn.classList.add('border-blue-500', 'text-blue-600', 'dark:text-blue-400');
+            activeBtn.classList.remove('border-transparent', 'text-gray-500', 'dark:text-gray-400');
+        }
+
+        /**
+         * Renders the generated flashcards into the UI.
+         * @param {Array<Object>} flashcards - An array of flashcard objects, each with a 'front' and 'back' property.
+         */
+        function displayFlashcards(flashcards) {
+            flashcardsOutput.innerHTML = ''; // Clear previous cards
+            flashcards.forEach(cardData => {
+                const cardElement = document.createElement('div');
+                cardElement.className = 'flashcard h-64 rounded-lg cursor-pointer';
+                cardElement.innerHTML = `
+                    <div class="flashcard-inner rounded-lg shadow-lg">
+                        <div class="flashcard-front bg-white dark:bg-gray-700 rounded-lg flex items-center justify-center p-4">
+                            <p class="text-lg font-semibold">${cardData.front}</p>
+                        </div>
+                        <div class="flashcard-back bg-blue-100 dark:bg-blue-900 rounded-lg flex items-center justify-center p-4">
+                            <p>${cardData.back}</p>
+                        </div>
+                    </div>
+                `;
+                // Add a click event listener to flip the card.
+                cardElement.addEventListener('click', () => {
+                    cardElement.classList.toggle('flipped');
+                });
+                flashcardsOutput.appendChild(cardElement);
+            });
+        }
+
+    </script>
+</body>
+</html>
