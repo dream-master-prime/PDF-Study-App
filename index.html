@@ -165,6 +165,7 @@
 
         // --- GLOBAL VARIABLES ---
         let pdfText = "";
+        let storedApiKey = ""; // Store API key in memory instead of localStorage
 
         // --- DOM ELEMENT REFERENCES ---
         const apiKeyInput = document.getElementById('api-key-input');
@@ -189,16 +190,23 @@
 
         // --- INITIALIZATION ---
         document.addEventListener('DOMContentLoaded', () => {
-            const savedApiKey = localStorage.getItem('googleApiKey');
-            if (savedApiKey) {
-                apiKeyInput.value = savedApiKey;
+            // Use memory storage instead of localStorage
+            if (storedApiKey) {
+                apiKeyInput.value = storedApiKey;
             }
         });
 
         apiKeyInput.addEventListener('input', () => {
-            localStorage.setItem('googleApiKey', apiKeyInput.value);
+            // Store in memory instead of localStorage
+            storedApiKey = apiKeyInput.value;
         });
 
+        // Add Enter key support for Q&A
+        qaInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                qaBtn.click();
+            }
+        });
 
         // --- PDF HANDLING ---
         pdfUpload.addEventListener('change', async (event) => {
@@ -217,6 +225,7 @@
             try {
                 pdfText = await extractTextFromPdf(file);
                 aiToolsSection.classList.remove('hidden');
+                pdfProgress.classList.add('hidden');
             } catch (error) {
                 console.error('Error processing PDF:', error);
                 alert('Could not read the PDF file. It might be corrupted or protected.');
@@ -229,27 +238,30 @@
             const fileReader = new FileReader();
             return new Promise((resolve, reject) => {
                 fileReader.onload = async () => {
-                    const typedarray = new Uint8Array(fileReader.result);
-                    const pdf = await pdfjsLib.getDocument({data: typedarray}).promise;
-                    let fullText = '';
-                    
-                    for (let i = 1; i <= pdf.numPages; i++) {
-                        const page = await pdf.getPage(i);
-                        const textContent = await page.getTextContent();
-                        const pageText = textContent.items.map(item => item.str).join(' ');
-                        fullText += pageText + '\n\n';
+                    try {
+                        const typedarray = new Uint8Array(fileReader.result);
+                        const pdf = await pdfjsLib.getDocument({data: typedarray}).promise;
+                        let fullText = '';
+                        
+                        for (let i = 1; i <= pdf.numPages; i++) {
+                            const page = await pdf.getPage(i);
+                            const textContent = await page.getTextContent();
+                            const pageText = textContent.items.map(item => item.str).join(' ');
+                            fullText += pageText + '\n\n';
 
-                        const progress = Math.round((i / pdf.numPages) * 100);
-                        progressBar.style.width = `${progress}%`;
-                        progressBar.textContent = `${progress}%`;
+                            const progress = Math.round((i / pdf.numPages) * 100);
+                            progressBar.style.width = `${progress}%`;
+                            progressBar.textContent = `${progress}%`;
+                        }
+                        resolve(fullText);
+                    } catch (error) {
+                        reject(error);
                     }
-                    resolve(fullText);
                 };
                 fileReader.onerror = reject;
                 fileReader.readAsArrayBuffer(file);
             });
         }
-
 
         // --- GEMINI API INTERACTION ---
         async function callGemini(prompt) {
@@ -264,7 +276,11 @@
             const payload = {
                 contents: [{
                     parts: [{ text: prompt }]
-                }]
+                }],
+                generationConfig: {
+                    temperature: 0.7,
+                    maxOutputTokens: 2048
+                }
             };
 
             try {
@@ -278,10 +294,12 @@
                     const errorData = await response.json();
                     if(response.status === 403) {
                          alert(`API Error: ${response.status} - Your API Key might be invalid or has restrictions. Please check your key in Google AI Studio.`);
+                    } else if (response.status === 429) {
+                         alert(`API Error: Rate limit exceeded. Please wait a moment and try again.`);
                     } else {
-                         alert(`API Error: ${response.status} - ${errorData.error.message}`);
+                         alert(`API Error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
                     }
-                    throw new Error(`API Error: ${response.status} - ${errorData.error.message}`);
+                    throw new Error(`API Error: ${response.status}`);
                 }
 
                 const result = await response.json();
@@ -302,64 +320,104 @@
             }
         }
 
-
         // --- FEATURE IMPLEMENTATIONS ---
 
         generateSummaryBtn.addEventListener('click', async () => {
-            if (!pdfText) {
+            if (!pdfText.trim()) {
                 alert("Please upload a PDF first.");
                 return;
             }
+            
             summaryLoader.classList.remove('hidden');
             summaryOutput.innerHTML = '';
+            generateSummaryBtn.disabled = true;
             
-            const prompt = `Please provide a concise summary of the following document. Focus on the key points, main arguments, and conclusions. The summary should be easy to understand for someone who has not read the original document.\n\nDOCUMENT:\n${pdfText}`;
+            const prompt = `Please provide a concise summary of the following document. Focus on the key points, main arguments, and conclusions. The summary should be easy to understand and well-structured with clear paragraphs.\n\nDOCUMENT:\n${pdfText.substring(0, 30000)}`; // Limit text length
             
             const summary = await callGemini(prompt);
             summaryLoader.classList.add('hidden');
+            generateSummaryBtn.disabled = false;
             
             if (summary) {
                 summaryOutput.innerHTML = summary.replace(/\n/g, '<br>');
             } else {
-                summaryOutput.textContent = "Failed to generate summary. Check the console for details.";
+                summaryOutput.innerHTML = '<p class="text-red-500">Failed to generate summary. Please check your API key and try again.</p>';
             }
         });
 
         generateFlashcardsBtn.addEventListener('click', async () => {
-            if (!pdfText) {
+            if (!pdfText.trim()) {
                 alert("Please upload a PDF first.");
                 return;
             }
+            
             flashcardsLoader.classList.remove('hidden');
             flashcardsOutput.innerHTML = '';
+            generateFlashcardsBtn.disabled = true;
 
-            // **FIX APPLIED HERE**: The prompt is now more direct to ask for ONLY JSON.
-            const prompt = `Based on the following document, generate flashcards. Respond with ONLY a valid JSON array of objects. Each object must have a "front" property (the question or term) and a "back" property (the answer or definition). Do not include any text, explanation, or markdown formatting before or after the JSON array. Example format: [{"front": "Term 1", "back": "Definition 1"}, {"front": "Term 2", "back": "Definition 2"}].\n\nDOCUMENT:\n${pdfText}`;
+            // Improved prompt with better formatting instructions
+            const prompt = `Create flashcards from the following document. Return ONLY a valid JSON array with no additional text, explanations, or markdown formatting. Each flashcard should be an object with "front" (question/term) and "back" (answer/definition) properties. Generate 8-12 flashcards covering the most important concepts.
+
+Format: [{"front": "Question or term here", "back": "Answer or definition here"}]
+
+DOCUMENT:
+${pdfText.substring(0, 25000)}`;
 
             const responseText = await callGemini(prompt);
             flashcardsLoader.classList.add('hidden');
+            generateFlashcardsBtn.disabled = false;
 
             if (responseText) {
                 try {
-                    // **FIX APPLIED HERE**: This parsing logic is more robust.
-                    // It finds the start and end of the JSON array to avoid errors
-                    // from extra text or markdown in the AI's response.
-                    const startIndex = responseText.indexOf('[');
-                    const endIndex = responseText.lastIndexOf(']');
+                    // Enhanced JSON extraction
+                    let jsonString = responseText.trim();
+                    
+                    // Remove markdown code blocks if present
+                    jsonString = jsonString.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+                    
+                    // Find JSON array boundaries
+                    const startIndex = jsonString.indexOf('[');
+                    const endIndex = jsonString.lastIndexOf(']');
                     
                     if (startIndex === -1 || endIndex === -1) {
-                        throw new Error("Could not find a JSON array in the AI's response.");
+                        throw new Error("No JSON array found in response");
                     }
                     
-                    const jsonString = responseText.substring(startIndex, endIndex + 1);
+                    jsonString = jsonString.substring(startIndex, endIndex + 1);
+                    
+                    // Clean up any remaining non-JSON text
+                    jsonString = jsonString.replace(/^\s*[^[]*/, '').replace(/[^\]]*\s*$/, '');
+                    
                     const flashcards = JSON.parse(jsonString);
+                    
+                    if (!Array.isArray(flashcards) || flashcards.length === 0) {
+                        throw new Error("Invalid flashcards format");
+                    }
+                    
                     displayFlashcards(flashcards);
                 } catch (error) {
                     console.error("Error parsing flashcards JSON:", error);
-                    flashcardsOutput.innerHTML = `<p class="text-red-500">Could not parse the flashcards from the AI's response. The format was invalid. Please try again.</p>`;
+                    console.log("Raw response:", responseText);
+                    
+                    // Fallback: try to create flashcards from the text response
+                    const fallbackCards = createFallbackFlashcards(responseText);
+                    if (fallbackCards.length > 0) {
+                        displayFlashcards(fallbackCards);
+                    } else {
+                        flashcardsOutput.innerHTML = `
+                            <div class="col-span-full text-center p-8">
+                                <p class="text-red-500 mb-4">Could not parse flashcards from the AI response.</p>
+                                <p class="text-sm text-gray-600">The AI returned content in an unexpected format. Please try again.</p>
+                            </div>
+                        `;
+                    }
                 }
             } else {
-                flashcardsOutput.innerHTML = `<p class="text-red-500">Failed to generate flashcards. Check the console for details.</p>`;
+                flashcardsOutput.innerHTML = `
+                    <div class="col-span-full text-center p-8">
+                        <p class="text-red-500">Failed to generate flashcards. Please check your API key and try again.</p>
+                    </div>
+                `;
             }
         });
         
@@ -369,25 +427,32 @@
                 alert("Please enter a question.");
                 return;
             }
-            if (!pdfText) {
+            if (!pdfText.trim()) {
                 alert("Please upload a PDF first.");
                 return;
             }
+            
             qaLoader.classList.remove('hidden');
             qaOutput.innerHTML = '';
+            qaBtn.disabled = true;
 
-            const prompt = `Based on the content of the following document, please answer the user's question. If the answer is not in the document, say that you cannot find the answer in the provided text.\n\nDOCUMENT:\n${pdfText}\n\nQUESTION:\n${question}`;
+            const prompt = `Based on the content of the following document, please answer the user's question. Provide a comprehensive answer if the information is available in the document. If the answer is not in the document, clearly state that you cannot find the answer in the provided text.
+
+DOCUMENT:
+${pdfText.substring(0, 30000)}
+
+QUESTION: ${question}`;
             
             const answer = await callGemini(prompt);
             qaLoader.classList.add('hidden');
+            qaBtn.disabled = false;
 
             if (answer) {
-                 qaOutput.innerHTML = answer.replace(/\n/g, '<br>');
+                qaOutput.innerHTML = answer.replace(/\n/g, '<br>');
             } else {
-                qaOutput.textContent = "Failed to get an answer. Check the console for details.";
+                qaOutput.innerHTML = '<p class="text-red-500">Failed to get an answer. Please check your API key and try again.</p>';
             }
         });
-
 
         // --- UI HELPER FUNCTIONS ---
 
@@ -405,18 +470,33 @@
 
         function displayFlashcards(flashcards) {
             flashcardsOutput.innerHTML = '';
-            flashcards.forEach(cardData => {
-                // A quick check to ensure the card object is valid before creating the element
+            
+            if (!flashcards || flashcards.length === 0) {
+                flashcardsOutput.innerHTML = `
+                    <div class="col-span-full text-center p-8">
+                        <p class="text-gray-500">No flashcards generated. Please try again.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            flashcards.forEach((cardData, index) => {
                 if (cardData && cardData.front && cardData.back) {
                     const cardElement = document.createElement('div');
-                    cardElement.className = 'flashcard h-64 rounded-lg cursor-pointer';
+                    cardElement.className = 'flashcard h-64 rounded-lg cursor-pointer transform hover:scale-105 transition-transform duration-200';
                     cardElement.innerHTML = `
                         <div class="flashcard-inner rounded-lg shadow-lg">
-                            <div class="flashcard-front bg-white dark:bg-gray-700 rounded-lg flex items-center justify-center p-4">
-                                <p class="text-lg font-semibold">${cardData.front}</p>
+                            <div class="flashcard-front bg-white dark:bg-gray-700 rounded-lg border-2 border-gray-200 dark:border-gray-600">
+                                <div class="p-4 h-full flex flex-col justify-center">
+                                    <p class="text-lg font-semibold text-center">${escapeHtml(cardData.front)}</p>
+                                    <p class="text-sm text-gray-500 dark:text-gray-400 text-center mt-4">Click to reveal answer</p>
+                                </div>
                             </div>
-                            <div class="flashcard-back bg-blue-100 dark:bg-blue-900 rounded-lg flex items-center justify-center p-4">
-                                <p>${cardData.back}</p>
+                            <div class="flashcard-back bg-blue-100 dark:bg-blue-900 rounded-lg border-2 border-blue-300 dark:border-blue-700">
+                                <div class="p-4 h-full flex flex-col justify-center">
+                                    <p class="text-center">${escapeHtml(cardData.back)}</p>
+                                    <p class="text-sm text-blue-600 dark:text-blue-300 text-center mt-4">Click to see question</p>
+                                </div>
                             </div>
                         </div>
                     `;
@@ -426,6 +506,48 @@
                     flashcardsOutput.appendChild(cardElement);
                 }
             });
+        }
+
+        function createFallbackFlashcards(responseText) {
+            // Try to extract Q&A pairs from formatted text
+            const cards = [];
+            const lines = responseText.split('\n');
+            let currentFront = '';
+            let currentBack = '';
+            let isBack = false;
+            
+            for (let line of lines) {
+                line = line.trim();
+                if (line.match(/^\d+\.|^Q:|^Question:|^Front:/i)) {
+                    if (currentFront && currentBack) {
+                        cards.push({ front: currentFront, back: currentBack });
+                    }
+                    currentFront = line.replace(/^\d+\.|^Q:|^Question:|^Front:/i, '').trim();
+                    currentBack = '';
+                    isBack = false;
+                } else if (line.match(/^A:|^Answer:|^Back:/i)) {
+                    currentBack = line.replace(/^A:|^Answer:|^Back:/i, '').trim();
+                    isBack = true;
+                } else if (line && !line.match(/^[#*-]/)) {
+                    if (isBack) {
+                        currentBack += ' ' + line;
+                    } else if (currentFront) {
+                        currentFront += ' ' + line;
+                    }
+                }
+            }
+            
+            if (currentFront && currentBack) {
+                cards.push({ front: currentFront, back: currentBack });
+            }
+            
+            return cards.slice(0, 10); // Limit to 10 cards
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
         }
 
     </script>
